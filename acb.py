@@ -397,7 +397,7 @@ def extract_acb(acb_file, target_dir):
         print(track)
         name = "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
         with open(os.path.join(target_dir, name), "wb") as named_out_file:
-            named_out_file.write(data_source.file_data_for_cue_id(track.cue_id))
+            named_out_file.write(data_source.file_data_for_cue_id(track.wav_id))
 
 def main(invocation, acb_file, target_dir, *_):
     with open(acb_file, "rb") as acb:
