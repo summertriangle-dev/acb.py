@@ -324,7 +324,10 @@ class TrackList(object):
             r_data = syns.rows[row["ReferenceIndex"]]["ReferenceItems"]
             a, b = struct.unpack(">HH", r_data)
 
-            wav_id = wavs.rows[b]["Id"]
+            wav_id = wavs.rows[b].get("Id")
+            if wav_id is None:
+                wav_id = wavs.rows[b]["MemoryAwbId"]
+            
             enc = wavs.rows[b]["EncodeType"]
             is_stream = wavs.rows[b]["Streaming"]
 
