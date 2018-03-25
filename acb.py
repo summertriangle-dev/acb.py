@@ -365,7 +365,10 @@ class AFSArchive(object):
     def create_file_entries(self, buf, file_count):
         buf.seek(0x10)
         read_cue_ids = struct.Struct("<" + ("H" * file_count))
-        read_raw_offs = struct.Struct("<" + ("I" * (file_count + 1)))
+        if self.offset_size == 2:
+            read_raw_offs = struct.Struct("<" + ("H" * (file_count + 1)))
+        else:
+            read_raw_offs = struct.Struct("<" + ("I" * (file_count + 1)))
 
         # read all in one go
         cue_ids = buf.struct(read_cue_ids)
