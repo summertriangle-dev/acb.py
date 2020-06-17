@@ -44,32 +44,21 @@
 # FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
-import struct
-import functools
-import itertools
-import os
 import io
 import math
+import struct
 import sys
+import itertools
+import os
+import re
 from collections import namedtuple as T
 
-COLUMN_STORAGE_MASK = 0xF0
-COLUMN_STORAGE_PERROW = 0x50
-COLUMN_STORAGE_CONSTANT = 0x30
-COLUMN_STORAGE_CONSTANT2 = 0x70
-COLUMN_STORAGE_ZERO = 0x10
-
-COLUMN_TYPE_MASK = 0x0F
-COLUMN_TYPE_DATA   = 0x0B
-COLUMN_TYPE_STRING = 0x0A
-COLUMN_TYPE_FLOAT  = 0x08
-COLUMN_TYPE_8BYTE  = 0x06
-COLUMN_TYPE_4BYTE2 = 0x05
-COLUMN_TYPE_4BYTE  = 0x04
-COLUMN_TYPE_2BYTE2 = 0x03
-COLUMN_TYPE_2BYTE  = 0x02
-COLUMN_TYPE_1BYTE2 = 0x01
-COLUMN_TYPE_1BYTE  = 0x00
+try:
+    from .utf import UTFTable, R
+    from .disarm import DisarmContext
+except ImportError:
+    from utf import UTFTable, R
+    from disarm import DisarmContext
 
 WAVEFORM_ENCODE_TYPE_ADX          = 0
 WAVEFORM_ENCODE_TYPE_HCA          = 2
@@ -77,40 +66,6 @@ WAVEFORM_ENCODE_TYPE_VAG          = 7
 WAVEFORM_ENCODE_TYPE_ATRAC3       = 8
 WAVEFORM_ENCODE_TYPE_BCWAV        = 9
 WAVEFORM_ENCODE_TYPE_NINTENDO_DSP = 13
-
-# string and data fields require more information
-def promise_data(r):
-    offset = r.uint32_t()
-    size = r.uint32_t()
-    return lambda h: r.bytes(size, at=h.data_offset + 8 + offset)
-
-def promise_string(r):
-    offset = r.uint32_t()
-    return lambda h: r.string0(at=h.string_table_offset + 8 + offset)
-
-column_data_dtable = {
-    COLUMN_TYPE_DATA   : promise_data,
-    COLUMN_TYPE_STRING : promise_string,
-    COLUMN_TYPE_FLOAT  : lambda r: r.float32_t(),
-    COLUMN_TYPE_8BYTE  : lambda r: r.uint64_t(),
-    COLUMN_TYPE_4BYTE2 : lambda r: r.int32_t(),
-    COLUMN_TYPE_4BYTE  : lambda r: r.uint32_t(),
-    COLUMN_TYPE_2BYTE2 : lambda r: r.int16_t(),
-    COLUMN_TYPE_2BYTE  : lambda r: r.uint16_t(),
-    COLUMN_TYPE_1BYTE2 : lambda r: r.int8_t(),
-    COLUMN_TYPE_1BYTE  : lambda r: r.uint8_t()}
-
-column_data_stable = {
-    COLUMN_TYPE_DATA   : "8s",
-    COLUMN_TYPE_STRING : "4s",
-    COLUMN_TYPE_FLOAT  : "f",
-    COLUMN_TYPE_8BYTE  : "Q",
-    COLUMN_TYPE_4BYTE2 : "i",
-    COLUMN_TYPE_4BYTE  : "I",
-    COLUMN_TYPE_2BYTE2 : "h",
-    COLUMN_TYPE_2BYTE  : "H",
-    COLUMN_TYPE_1BYTE2 : "b",
-    COLUMN_TYPE_1BYTE  : "B"}
 
 wave_type_ftable = {
     WAVEFORM_ENCODE_TYPE_ADX          : ".adx",
@@ -120,184 +75,7 @@ wave_type_ftable = {
     WAVEFORM_ENCODE_TYPE_BCWAV        : ".bcwav",
     WAVEFORM_ENCODE_TYPE_NINTENDO_DSP : ".dsp"}
 
-class R(object):
-    """ file reader based on types """
-    def __init__(self, file):
-        self.f = file
-
-    def readfunc(fmt):
-        a = struct.Struct(fmt)
-        b = a.size
-        def f(f, at=None):
-            if at is not None:
-                back = f.tell()
-                f.seek(at)
-                d = a.unpack(f.read(b))[0]
-                f.seek(back)
-                return d
-            else:
-                return a.unpack(f.read(b))[0]
-        return f
-
-    def latebinder(f):
-        return lambda s: f(s.f)
-
-    int8_t    = latebinder(readfunc(">b"))
-    uint8_t   = latebinder(readfunc(">B"))
-    int16_t   = latebinder(readfunc(">h"))
-    uint16_t  = latebinder(readfunc(">H"))
-    int32_t   = latebinder(readfunc(">i"))
-    uint32_t  = latebinder(readfunc(">I"))
-    int64_t   = latebinder(readfunc(">q"))
-    uint64_t  = latebinder(readfunc(">Q"))
-    float32_t = latebinder(readfunc(">f"))
-
-    le_int8_t    = latebinder(readfunc("<b"))
-    le_uint8_t   = latebinder(readfunc("<B"))
-    le_int16_t   = latebinder(readfunc("<h"))
-    le_uint16_t  = latebinder(readfunc("<H"))
-    le_int32_t   = latebinder(readfunc("<i"))
-    le_uint32_t  = latebinder(readfunc("<I"))
-    le_int64_t   = latebinder(readfunc("<q"))
-    le_uint64_t  = latebinder(readfunc("<Q"))
-    le_float32_t = latebinder(readfunc("<f"))
-
-
-    def seek(self, at, where=os.SEEK_SET):
-        self.f.seek(at, where)
-
-    def struct(self, struct, at=None):
-        if at is not None:
-            back = self.f.tell()
-            self.f.seek(at)
-            d = self.struct(struct)
-            self.f.seek(back)
-            return d
-
-        return struct.unpack(self.f.read(struct.size))
-
-    def bytes(self, size, at=None):
-        if at is not None:
-            back = self.f.tell()
-            self.f.seek(at)
-            d = self.bytes(size)
-            self.f.seek(back)
-            return d
-
-        return self.f.read(size)
-
-    def string0(self, at=None):
-        if at is not None:
-            back = self.f.tell()
-            self.f.seek(at)
-            d = self.string0()
-            self.f.seek(back)
-            return d
-
-        bk = self.f.tell()
-        tl = 0
-        sr = []
-        while 1:
-            b = self.f.read(16)
-            tl += len(b)
-
-            if len(b) == 0:
-                raise Exception("EOF")
-
-            for c in b:
-                if c != 0:
-                    sr.append(c)
-                else:
-                    break
-            else:
-                continue
-            break
-        string = bytes(sr)
-        self.f.seek(bk + len(string) + 1)
-        return string.decode("utf8")
-
-class Struct(struct.Struct):
-    """ struct with an output filter (usually a namedtuple) """
-    def __init__(self, fmt, out_type):
-        super().__init__(fmt)
-        self.out_type = out_type
-
-    def unpack(self, buf):
-        return self.out_type(* super().unpack(buf))
-
-utf_header_t = Struct(">IHHIIIHHI",
-    T("utf_header_t", ("table_size", "u1", "row_offset", "string_table_offset",
-    "data_offset", "table_name_offset", "number_of_fields", "row_size", "number_of_rows")))
-
-class UTFTable(object):
-    def __init__(self, file):
-        buf = R(file)
-        magic = buf.uint32_t()
-        if magic != 0x40555446:
-            raise ValueError("bad magic")
-
-        self.header = buf.struct(utf_header_t)
-        self.name = buf.string0(at=self.header.string_table_offset + 8 + self.header.table_name_offset)
-
-        buf.seek(0x20)
-        self.read_schema(buf)
-
-        buf.seek(self.header.row_offset + 8)
-        self.rows = list(self.iter_rows(buf))
-
-    def read_schema(self, buf):
-        buf.seek(0x20)
-
-        dynamic_keys = []
-        format = ">"
-        constants = {}
-
-        for _ in range(self.header.number_of_fields):
-            field_type = buf.uint8_t()
-            name_offset = buf.uint32_t()
-
-            occurrence = field_type & COLUMN_STORAGE_MASK
-            type_key = field_type & COLUMN_TYPE_MASK
-
-            if occurrence in (COLUMN_STORAGE_CONSTANT, COLUMN_STORAGE_CONSTANT2):
-                name = buf.string0(at=self.header.string_table_offset + 8 + name_offset)
-                val = column_data_dtable[type_key](buf)
-                constants[name] = val
-            else:
-                dynamic_keys.append(buf.string0(at=self.header.string_table_offset + 8 + name_offset))
-                format += column_data_stable[type_key]
-
-        for k in constants.keys():
-            if callable(constants[k]):
-                constants[k] = constants[k](self.header)
-
-        self.dynamic_keys = dynamic_keys
-        self.struct_format = format
-        self.constants = constants
-
-    def resolve(self, buf, *args):
-        ret = []
-        for val in args:
-            if isinstance(val, bytes):
-                if len(val) == 8:
-                    offset, size = struct.unpack(">II", val)
-                    ret.append(buf.bytes(size, at=self.header.data_offset + 8 + offset))
-                else:
-                    offset = struct.unpack(">I", val)[0]
-                    ret.append(buf.string0(at=self.header.string_table_offset + 8 + offset))
-            else:
-                ret.append(val)
-        return tuple(ret)
-
-    def iter_rows(self, buf):
-        sfmt = Struct(self.struct_format, functools.partial(self.resolve, buf))
-        for n in range(self.header.number_of_rows):
-            values = buf.struct(sfmt)
-            ret = {k: v for k, v in zip(self.dynamic_keys, values)}
-            ret.update(self.constants)
-            yield ret
-
-track_t = T("track_t", ("cue_id", "name", "wav_id", "enc_type", "is_stream"))
+track_t = T("track_t", ("cue_id", "name", "memory_wav_id", "external_wav_id", "enc_type", "is_stream"))
 
 class TrackList(object):
     def __init__(self, utf):
@@ -327,15 +105,16 @@ class TrackList(object):
             wav_id = wavs.rows[b].get("Id")
             if wav_id is None:
                 wav_id = wavs.rows[b]["MemoryAwbId"]
-            
+            extern_wav_id = wavs.rows[b]["StreamAwbId"]
             enc = wavs.rows[b]["EncodeType"]
             is_stream = wavs.rows[b]["Streaming"]
 
-            self.tracks.append(track_t(row["CueId"], name_map.get(ind, "UNKNOWN"), wav_id, enc, is_stream))
+            self.tracks.append(track_t(row["CueId"], name_map.get(ind, "UNKNOWN"), wav_id,
+                extern_wav_id, enc, is_stream))
 
 def align(n):
     def _align(number):
-        return math.ceil(number / n) * n
+        return (number + n - 1) & ~(n - 1)
     return _align
 
 afs2_file_ent_t = T("afs2_file_ent_t", ("cue_id", "offset", "size"))
@@ -350,13 +129,20 @@ class AFSArchive(object):
 
         version = buf.bytes(4)
         file_count = buf.le_uint32_t()
-        self.alignment = buf.le_uint32_t()
-        print("afs2:", file_count, "files in ar")
-        print("afs2: aligned to", self.alignment, "bytes")
+
+        if version[0] >= 0x02:
+            self.alignment = buf.le_uint16_t()
+            self.mix_key = buf.le_uint16_t()
+        else:
+            self.alignment = buf.le_uint32_t()
+            self.mix_key = None
+
+        #print("afs2:", file_count, "files in ar")
+        #print("afs2: aligned to", self.alignment, "bytes")
 
         self.offset_size = version[1]
         self.offset_mask = int("FF" * self.offset_size, 16)
-        print("afs2: a file offset is", self.offset_size, "bytes")
+        #print("afs2: a file offset is", self.offset_size, "bytes")
 
         self.files = []
         self.create_file_entries(buf, file_count)
@@ -383,31 +169,98 @@ class AFSArchive(object):
 
         self.files = list(itertools.starmap(afs2_file_ent_t, zip(cue_ids, aligned_offs, lengths)))
 
-    def file_data_for_cue_id(self, cue_id):
+    def file_data_for_cue_id(self, cue_id, rw=False):
         for f in self.files:
             if f.cue_id == cue_id:
-                return self.file_data(f)
+                if rw:
+                    buf = bytearray(f.size)
+                    self.src.bytesinto(buf, at=f.offset)
+                    return buf
+                else:
+                    return self.src.bytes(f.size, at=f.offset)
         else:
             raise ValueError("id {0} not found in archive".format(cue_id))
 
-    def file_data(self, ent):
-        return self.src.bytes(ent.size, at=ent.offset)
+def find_awb(path):
+    return re.sub(r"\.acb$", ".awb", path)
 
-def extract_acb(acb_file, target_dir):
-    utf = UTFTable(acb_file)
+def name_gen_default(track):
+     return "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
+
+def extract_acb(acb_file, target_dir, extern_awb=None, hca_keys=None, name_gen=name_gen_default):
+    if isinstance(acb_file, str):
+        with open(acb_file, "rb") as _acb_file:
+            utf = UTFTable(_acb_file)
+    else:
+        utf = UTFTable(acb_file)
+
     cue = TrackList(utf)
-    embedded_awb = io.BytesIO(utf.rows[0]["AwbFile"])
-    data_source = AFSArchive(embedded_awb)
+
+    disarmer_mem = None
+    disarmer_ext = None
+    memory_data_source = None
+    extern_data_source = None
+    external_awb = None
+
+    if len(utf.rows[0]["AwbFile"]) > 0:
+        embedded_awb = io.BytesIO(utf.rows[0]["AwbFile"])
+        memory_data_source = AFSArchive(embedded_awb)
+
+    if any(track.is_stream for track in cue.tracks):
+        extern_name = extern_awb or find_awb(acb_file)
+        try:
+            external_awb = open(extern_name, "rb")
+        except FileNotFoundError:
+            print("Error: At least one track requests streaming, but an external AWB could not be found.",
+                file=sys.stderr)
+            print("Specify the external AWB with --awb.",
+                file=sys.stderr)
+            sys.exit(1)
+        extern_data_source = AFSArchive(external_awb)
+
+    if hca_keys:
+        if memory_data_source:
+            disarmer_mem = DisarmContext(hca_keys, memory_data_source.mix_key)
+        if extern_data_source:
+            disarmer_ext = DisarmContext(hca_keys, extern_data_source.mix_key)
 
     for track in cue.tracks:
         print(track)
-        name = "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
-        with open(os.path.join(target_dir, name), "wb") as named_out_file:
-            named_out_file.write(data_source.file_data_for_cue_id(track.wav_id))
+        name = name_gen(track)
 
-def main(invocation, acb_file, target_dir, *_):
-    with open(acb_file, "rb") as acb:
-        extract_acb(acb, target_dir)
+        with open(os.path.join(target_dir, name_gen(track)), "wb") as named_out_file:
+            if track.is_stream:
+                wid = track.external_wav_id
+                data_source = extern_data_source
+                disarmer = disarmer_ext
+            else:
+                wid = track.memory_wav_id
+                data_source = memory_data_source
+                disarmer = disarmer_mem
+
+            if hca_keys:
+                hca_buf = data_source.file_data_for_cue_id(wid, rw=True)
+                disarmer.disarm(hca_buf)
+                named_out_file.write(hca_buf)
+            else:
+                named_out_file.write(data_source.file_data_for_cue_id(wid))
+
+    if external_awb:
+        external_awb.close()
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--disarm-with", help="decrypt HCAs with provided keys")
+    parser.add_argument("--awb", help="use file as the external AWB")
+    parser.add_argument("acb_file", help="input ACB file")
+    parser.add_argument("output_dir", help="directory to place output files in")
+
+    args = parser.parse_args()
+
+    os.makedirs(args.output_dir, 0o755, exist_ok=True)
+    extract_acb(args.acb_file, args.output_dir, args.awb, args.disarm_with)
 
 if __name__ == '__main__':
-    main(*sys.argv)
+    main()
