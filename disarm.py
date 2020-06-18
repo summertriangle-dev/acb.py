@@ -7,6 +7,20 @@ try:
 except ImportError:
     _acb_speedup = None
 
+SECTION_SIZES = {
+    b"HCA\x00": 8,
+    b"fmt\x00": 16,
+    b"comp":    16,
+    b"dec\x00": 12,
+    b"vbr\x00": 8,
+    b"ath\x00": 6,
+    b"loop":    16,
+    b"ciph":    6,
+    b"rva\x00": 8,
+    b"comm":    5,
+    b"pad\x00": 4,
+}
+
 CHECKSUM_TABLE = (
     0x0000,0x8005,0x800F,0x000A,0x801B,0x001E,0x0014,0x8011,0x8033,0x0036,0x003C,0x8039,0x0028,0x802D,0x8027,0x0022,
     0x8063,0x0066,0x006C,0x8069,0x0078,0x807D,0x8077,0x0072,0x0050,0x8055,0x805F,0x005A,0x804B,0x004E,0x0044,0x8041,
@@ -148,16 +162,20 @@ class DisarmContext(object):
 
         return key_table_2
 
-    def disarm(self, buf: bytearray):
+    def disarm(self, buf: bytearray, no_unmask: bool=False):
         magic = buf[:4]
         masked = True if magic[0] & 0x80 else False
         header_size = struct.unpack(">H", buf[6:8])[0]
+
+        if not no_unmask:
+            self.unmask_header(buf, header_size)
+            masked = False
 
         try:
             comp_seg = buf.index(b"\xe3\xef\xed\xf0" if masked else b"comp", 0, header_size)
         except ValueError:
             try:
-                comp_seg = buf.index(b"\xe4\xe5\xe3\x00" if masked else b"dec ", 0, header_size)
+                comp_seg = buf.index(b"\xe4\xe5\xe3\x00" if masked else b"dec\x00", 0, header_size)
             except ValueError:
                 raise ValueError("cannot find a segment containing the block size")
 
@@ -167,7 +185,7 @@ class DisarmContext(object):
             return
 
         try:
-            fmt_seg = buf.index(b"\xe6\xed\xf4\x00" if masked else b"fmt ", 0, header_size)
+            fmt_seg = buf.index(b"\xe6\xed\xf4\x00" if masked else b"fmt\x00", 0, header_size)
         except ValueError:
             raise ValueError("cannot find the fmt segment")
 
@@ -192,6 +210,19 @@ class DisarmContext(object):
             _acb_speedup.checksum_block_fast(memoryview(buf)[:end])
         else:
             buf[end:end + 2] = checksum(memoryview(buf)[:end]).to_bytes(2, "big")
+
+    def unmask_header(self, buf, header_size):
+        base = 0
+        while base < header_size:
+            tag = bytes(x & 0x7f for x in buf[base:base + 4])
+            buf[base:base + 4] = tag
+
+            if tag == b"pad\x00":
+                break
+            if tag == b"comm":
+                base += buf[base + 4]
+
+            base += SECTION_SIZES.get(tag, 4)
 
     def disarm_actual(self, buf, frompos, blockcnt, blocksize, usetable):
         base = frompos

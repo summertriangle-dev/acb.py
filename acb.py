@@ -187,7 +187,7 @@ def find_awb(path):
 def name_gen_default(track):
      return "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
 
-def extract_acb(acb_file, target_dir, extern_awb=None, hca_keys=None, name_gen=name_gen_default):
+def extract_acb(acb_file, target_dir, extern_awb=None, hca_keys=None, name_gen=name_gen_default, no_unmask=False):
     if isinstance(acb_file, str):
         with open(acb_file, "rb") as _acb_file:
             utf = UTFTable(_acb_file)
@@ -240,7 +240,7 @@ def extract_acb(acb_file, target_dir, extern_awb=None, hca_keys=None, name_gen=n
 
             if hca_keys:
                 hca_buf = data_source.file_data_for_cue_id(wid, rw=True)
-                disarmer.disarm(hca_buf)
+                disarmer.disarm(hca_buf, no_unmask)
                 named_out_file.write(hca_buf)
             else:
                 named_out_file.write(data_source.file_data_for_cue_id(wid))
@@ -254,13 +254,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--disarm-with", help="decrypt HCAs with provided keys")
     parser.add_argument("--awb", help="use file as the external AWB")
+    parser.add_argument("--no-unmask", action="store_true", default=False,
+        help="don't unmask segment names (requires --disarm-with)")
     parser.add_argument("acb_file", help="input ACB file")
     parser.add_argument("output_dir", help="directory to place output files in")
 
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, 0o755, exist_ok=True)
-    extract_acb(args.acb_file, args.output_dir, args.awb, args.disarm_with)
+    extract_acb(args.acb_file, args.output_dir, args.awb, args.disarm_with, no_unmask=args.no_unmask)
 
 if __name__ == '__main__':
     main()
