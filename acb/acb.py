@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # acb.py: For all your ACB extracting needs
 
 # Copyright (c) 2016, The Holy Constituency of the Summer Triangle.
@@ -53,12 +52,8 @@ import os
 import re
 from collections import namedtuple as T
 
-try:
-    from .utf import UTFTable, R
-    from .disarm import DisarmContext
-except ImportError:
-    from utf import UTFTable, R
-    from disarm import DisarmContext
+from .utf import UTFTable, R
+from .disarm import DisarmContext
 
 WAVEFORM_ENCODE_TYPE_ADX          = 0
 WAVEFORM_ENCODE_TYPE_HCA          = 2
@@ -247,22 +242,3 @@ def extract_acb(acb_file, target_dir, extern_awb=None, hca_keys=None, name_gen=n
 
     if external_awb:
         external_awb.close()
-
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--disarm-with", help="decrypt HCAs with provided keys")
-    parser.add_argument("--awb", help="use file as the external AWB")
-    parser.add_argument("--no-unmask", action="store_true", default=False,
-        help="don't unmask segment names (requires --disarm-with)")
-    parser.add_argument("acb_file", help="input ACB file")
-    parser.add_argument("output_dir", help="directory to place output files in")
-
-    args = parser.parse_args()
-
-    os.makedirs(args.output_dir, 0o755, exist_ok=True)
-    extract_acb(args.acb_file, args.output_dir, args.awb, args.disarm_with, no_unmask=args.no_unmask)
-
-if __name__ == '__main__':
-    main()
