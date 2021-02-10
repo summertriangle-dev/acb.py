@@ -9,7 +9,7 @@
 #if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
     #pragma comment(lib, "Ws2_32.lib")
     #include "Winsock2.h"
-#elif __APPLE__
+#else
     #include <arpa/inet.h>
 #endif
 
