@@ -51,6 +51,7 @@ import itertools
 import os
 import re
 from collections import namedtuple as T
+from typing import Optional, Union, BinaryIO, Tuple, List, Callable
 
 from .utf import UTFTable, R
 from .disarm import DisarmContext
@@ -65,8 +66,8 @@ WAVEFORM_ENCODE_TYPE_NINTENDO_DSP = 13
 wave_type_ftable = {
     WAVEFORM_ENCODE_TYPE_ADX          : ".adx",
     WAVEFORM_ENCODE_TYPE_HCA          : ".hca",
-    WAVEFORM_ENCODE_TYPE_VAG          : ".at3",
-    WAVEFORM_ENCODE_TYPE_ATRAC3       : ".vag",
+    WAVEFORM_ENCODE_TYPE_VAG          : ".vag",
+    WAVEFORM_ENCODE_TYPE_ATRAC3       : ".at3",
     WAVEFORM_ENCODE_TYPE_BCWAV        : ".bcwav",
     WAVEFORM_ENCODE_TYPE_NINTENDO_DSP : ".dsp"}
 
@@ -84,7 +85,7 @@ class TrackList(object):
         wavs = UTFTable(wav_handle)
         syns = UTFTable(syn_handle)
 
-        self.tracks = []
+        self.tracks: List[track_t] = []
 
         name_map = {}
         for row in nams.rows:
@@ -176,69 +177,177 @@ class AFSArchive(object):
         else:
             raise ValueError("id {0} not found in archive".format(cue_id))
 
+AnyFile = Union[str, os.PathLike, BinaryIO]
+Uninitialized = object()
+
+def _get_file_obj(name: AnyFile) -> Tuple[BinaryIO, bool]:
+    if isinstance(name, (str, os.PathLike)):
+        return open(name, "rb"), True
+    else:
+        return name, False
+
+class ACBFile(object):
+    """ Represents an ACB file.
+
+        You should call the close() method to release the underlying file objects
+        when finished, or use the object as a context manager.
+        Tracks can be accessed using .track_list together with get_track_data().
+
+        Constructor arguments:
+        - acb_file: Path to the file, or an open file object in binary mode.
+        - extern_awb: Path to the streaming AWB file, if needed.
+        - hca_keys: HCA keys in string format. Can be one of:
+            "0xLOWBYTES,0xHIGHBYTES", "0xHIGHBYTESLOWBYTES", or None.
+            "0xLOWBYTES,0xHIGHBYTES" is equivalent to invoking hca_decoder
+            with arguments "-a LOWBYTES -b HIGHBYTES".
+            If None, HCA files will not be decrypted.
+    """
+    def __init__(self, acb_file: AnyFile, extern_awb: Optional[AnyFile] = None, hca_keys: Optional[str] = None):
+        self.acb_handle, self.acb_handle_owned = _get_file_obj(acb_file)
+        
+        if extern_awb is None:
+            self.awb_handle = None
+            self.awb_handle_owned = False
+        else:
+            self.awb_handle, self.awb_handle_owned = _get_file_obj(extern_awb)
+                
+        utf = UTFTable(self.acb_handle)
+        if len(utf.rows[0]["AwbFile"]) > 0:
+            self.embedded_awb = AFSArchive(io.BytesIO(utf.rows[0]["AwbFile"]))
+        else:
+            self.embedded_awb = None # type: ignore
+
+        if self.awb_handle:
+            self.external_awb = AFSArchive(self.awb_handle)
+        else:
+            self.external_awb = None # type: ignore
+
+        self.hca_keys = hca_keys
+        self.embedded_disarm: Optional[DisarmContext] = Uninitialized # type: ignore
+        self.external_disarm: Optional[DisarmContext] = Uninitialized # type: ignore
+
+        self.track_list = TrackList(utf)
+        self.closed = False
+    
+    def get_embedded_disarm(self) -> Optional[DisarmContext]:
+        if self.embedded_disarm is Uninitialized:
+            if self.hca_keys:
+                self.embedded_disarm = DisarmContext(self.hca_keys, self.embedded_awb.mix_key)
+            else:
+                self.embedded_disarm = None
+
+        return self.embedded_disarm
+    
+    def get_external_disarm(self) -> Optional[DisarmContext]:
+        if self.external_disarm is Uninitialized:
+            if self.hca_keys:
+                self.external_disarm = DisarmContext(self.hca_keys, self.external_awb.mix_key)
+            else:
+                self.external_disarm = None
+        return self.external_disarm
+
+    def get_track_data(self, track: track_t, disarm: Optional[bool] = None, unmask: bool = True) -> bytearray:
+        """ Gets encoded audio data as a bytearray.
+
+            Arguments:
+            - track: The track to get data for, from .track_list.
+            - disarm: Whether to decrypt HCA data before returning it.
+                The default action is to decrypt if hca_keys were passed when creating
+                the ACBFile. You can pass False to skip decryption, or True to force
+                decryption. 
+                ValueError is raised you force decryption and keys were not passed.
+            - unmask: Whether to remove XOR masking from HCA header tags. 
+                This only has an effect if decryption is enabled, whether implicitly or
+                explicitly.
+        """
+        if self.closed:
+            raise ValueError("ACBFile is closed")
+
+        if track.is_stream:
+            buf = self.external_awb.file_data_for_cue_id(track.external_wav_id, rw=True)
+            disarmer = self.get_external_disarm()
+        else:
+            buf = self.embedded_awb.file_data_for_cue_id(track.memory_wav_id, rw=True)
+            disarmer = self.get_embedded_disarm()
+
+        if disarm is True and not disarmer:
+            raise ValueError(
+                "Disarm was explicitly requested, but no keys were provided. "
+                "Either remove the disarm= argument from the call to get_track_data, "
+                "or provide keys using the hca_keys= argument to ACBFile."
+            )
+    
+        if disarm is None:
+            disarm = (disarmer is not None)
+
+        if disarm and disarmer:
+            disarmer.disarm(buf, not unmask)
+
+        return buf
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.close()
+
+    def close(self):
+        """ Close any open files held by ACBFile. If you passed file objects
+            instead of paths when creating the ACBFile instance, they will
+            not be closed.
+
+            Can be called multiple times; subsequent calls will have no effect.
+        """
+        if self.acb_handle_owned:
+            self.acb_handle.close()
+            self.acb_handle_owned = False
+        if self.awb_handle_owned:
+            self.awb_handle.close()
+            self.awb_handle_owned = False
+        self.closed = True
+
+    def __del__(self):
+        self.close()
+
+
 def find_awb(path):
     return re.sub(r"\.acb$", ".awb", path)
 
 def name_gen_default(track):
-     return "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
+    return "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
 
-def extract_acb(acb_file, target_dir, extern_awb=None, hca_keys=None, name_gen=name_gen_default, no_unmask=False):
-    if isinstance(acb_file, str):
-        with open(acb_file, "rb") as _acb_file:
-            utf = UTFTable(_acb_file)
-    else:
-        utf = UTFTable(acb_file)
+def extract_acb(
+    acb_file: AnyFile,
+    target_dir: str,
+    extern_awb: Optional[AnyFile] = None,
+    hca_keys: Optional[str] = None,
+    name_gen: Callable[[track_t], str] = name_gen_default,
+    no_unmask: bool = False
+):
+    """ Oneshot file extraction API. Dumps all tracks from a file into the
+        named output directory.
 
-    cue = TrackList(utf)
+        Arguments:
+        - acb_file: Path to the file, or an open file object in binary mode.
+        - target_dir: Path to the destination directory. Must already exist.
+        - extern_awb: Path to the streaming AWB file, if needed.
+        - hca_keys: Same as ACBFile's hca_keys argument.
+        - name_gen: A callable taking the track_t object and returning a 
+            destination filename. Should not return absolute paths, as
+            they will be prefixed with the target_dir.
+        - no_unmask: See ACBFile.get_track_data's unmask argument. For 
+            compatibility reasons, the meaning of this flag is reversed;
+            i.e. True will result in unmasking being disabled.
+    """
+    if isinstance(acb_file, str) and extern_awb is None:
+        awb_name = find_awb(acb_file)
+        if os.path.exists(awb_name):
+            extern_awb = awb_name
 
-    disarmer_mem = None
-    disarmer_ext = None
-    memory_data_source = None
-    extern_data_source = None
-    external_awb = None
+    with ACBFile(acb_file, extern_awb=extern_awb, hca_keys=hca_keys) as acb:
+        for track in acb.track_list.tracks:
+            print(track)
+            name = name_gen(track)
 
-    if len(utf.rows[0]["AwbFile"]) > 0:
-        embedded_awb = io.BytesIO(utf.rows[0]["AwbFile"])
-        memory_data_source = AFSArchive(embedded_awb)
-
-    if any(track.is_stream for track in cue.tracks):
-        extern_name = extern_awb or find_awb(acb_file)
-        try:
-            external_awb = open(extern_name, "rb")
-        except FileNotFoundError:
-            print("Error: At least one track requests streaming, but an external AWB could not be found.",
-                file=sys.stderr)
-            print("Specify the external AWB with --awb.",
-                file=sys.stderr)
-            sys.exit(1)
-        extern_data_source = AFSArchive(external_awb)
-
-    if hca_keys:
-        if memory_data_source:
-            disarmer_mem = DisarmContext(hca_keys, memory_data_source.mix_key)
-        if extern_data_source:
-            disarmer_ext = DisarmContext(hca_keys, extern_data_source.mix_key)
-
-    for track in cue.tracks:
-        print(track)
-        name = name_gen(track)
-
-        with open(os.path.join(target_dir, name_gen(track)), "wb") as named_out_file:
-            if track.is_stream:
-                wid = track.external_wav_id
-                data_source = extern_data_source
-                disarmer = disarmer_ext
-            else:
-                wid = track.memory_wav_id
-                data_source = memory_data_source
-                disarmer = disarmer_mem
-
-            if hca_keys:
-                hca_buf = data_source.file_data_for_cue_id(wid, rw=True)
-                disarmer.disarm(hca_buf, no_unmask)
-                named_out_file.write(hca_buf)
-            else:
-                named_out_file.write(data_source.file_data_for_cue_id(wid))
-
-    if external_awb:
-        external_awb.close()
+            with open(os.path.join(target_dir, name), "wb") as out_file:
+                out_file.write(acb.get_track_data(track))
