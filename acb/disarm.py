@@ -85,9 +85,9 @@ class DisarmContext(object):
 
     def __init__(self, keyspec: str, header_key: int = None):
         if "," in keyspec:
-            keya, keyb = keyspec.split(",")
-            keya = int(keya, 16)
-            keyb = int(keyb, 16)
+            keya_, keyb_ = keyspec.split(",")
+            keya = int(keya_, 16)
+            keyb = int(keyb_, 16)
 
             if header_key:
                 keylong = mix_header_key(keya | (keyb << 32), header_key)

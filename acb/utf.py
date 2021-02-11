@@ -50,36 +50,32 @@ import os
 from collections import namedtuple as T
 import sys
 
-if sys.version_info.major < 3:
-    BYTE_ZERO = "\x00"
-    def JOIN_BYTE_ARRAY(sr):
-        return b"".join(sr)
-else:
-    BYTE_ZERO = 0
-    def JOIN_BYTE_ARRAY(sr):
-        return bytes(sr)
+BYTE_ZERO = 0
+def JOIN_BYTE_ARRAY(sr):
+    return bytes(sr)
+
+def readfunc(fmt):
+    a = struct.Struct(fmt)
+    b = a.size
+    def f(f, at=None):
+        if at is not None:
+            back = f.tell()
+            f.seek(at)
+            d = a.unpack(f.read(b))[0]
+            f.seek(back)
+            return d
+        else:
+            return a.unpack(f.read(b))[0]
+
+    return f
+
+def latebinder(f):
+    return lambda s: f(s.f)
 
 class R(object):
     """ file reader based on types """
     def __init__(self, file):
         self.f = file
-
-    def readfunc(fmt):
-        a = struct.Struct(fmt)
-        b = a.size
-        def f(f, at=None):
-            if at is not None:
-                back = f.tell()
-                f.seek(at)
-                d = a.unpack(f.read(b))[0]
-                f.seek(back)
-                return d
-            else:
-                return a.unpack(f.read(b))[0]
-        return f
-
-    def latebinder(f):
-        return lambda s: f(s.f)
 
     int8_t    = latebinder(readfunc(">b"))
     uint8_t   = latebinder(readfunc(">B"))
