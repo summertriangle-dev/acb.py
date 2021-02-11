@@ -5,6 +5,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+// htons for win and mac
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
+    #pragma comment(lib, "Ws2_32.lib")
+    #include "Winsock2.h"
+#else
+    #include <arpa/inet.h>
+#endif
+
 static PyObject *disarm_block_fast(PyObject *self, PyObject *args);
 static PyObject *apply_checksum(PyObject *self, PyObject *args);
 

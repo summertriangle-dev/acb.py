@@ -7,7 +7,10 @@ HCA decryption is based on the 2ch HCA decoder. Thanks also to Headcrabbed who d
 Usage:
 
 ```sh
-python3 acb.py somefile.acb output
+python3 setup.py install
+python3 -m acb somefile.acb output
+# equivalent
+acbextract somefile.acb output
 ```
 
 You can also pass `--disarm-with=key1,key2` to have the library decrypt (but not decode) files for you. The key format
