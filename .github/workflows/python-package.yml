@@ -88,4 +88,8 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TEST_TOKEN }}
         run: |
-          twine upload --repository testpypi dist/* --skip-existing
+          if [ $(uname) == 'Linux' ]; then 
+            twine upload --repository testpypi dist/*-manylinux* --skip-existing
+          else
+            twine upload --repository testpypi dist/* --skip-existing
+          fi
