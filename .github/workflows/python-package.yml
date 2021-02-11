@@ -83,6 +83,7 @@ jobs:
 
       # Deploy
       - name: Publish
+        shell: bash
         if: success() && github.event_name == 'push'
         env:
           TWINE_USERNAME: __token__
