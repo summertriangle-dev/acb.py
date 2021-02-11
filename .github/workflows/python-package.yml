@@ -7,10 +7,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ['ubuntu-latest', 'macOS-latest', 'windows-latest']
+        os: ['macOS-latest', 'windows-latest']
         python-version: ['3.9', '3.8', '3.7', '3.6']
         compiler: ['gcc']
         architecture: ['x86', 'x64']
+        include:
+          - os: 'ubuntu-latest'
+            python-version: '3.9'
+            compiler: 'gcc'
 
     timeout-minutes: 30
 
@@ -71,12 +75,22 @@ jobs:
       # Create wheels for deployment
       - name: Build wheels
         run: python setup.py sdist bdist_wheel --skip-build
+        if: runner.os != 'Linux' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    
+      - name: Build wheels (manylinux)
+        uses: RalfG/python-wheels-manylinux-build@v0.3.3-manylinux2010_x86_64
+        if: runner.os == 'Linux' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
       # Deploy
-      # - name: Publish
-      #   if: success() && runner.os != 'Linux' && github.event_name == 'push'
-      #   env:
-      #     TWINE_USERNAME: __token__
-      #     TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-      #   run: |
-      #     twine upload dist/* --skip-existing
+      - name: Publish
+        shell: bash
+        if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          if [ $(uname) == 'Linux' ]; then 
+            twine upload dist/*-manylinux* --skip-existing
+          else
+            twine upload dist/* --skip-existing
+          fi
