@@ -7,7 +7,7 @@ HCA decryption is based on the 2ch HCA decoder. Thanks also to Headcrabbed who d
 Usage:
 
 ```sh
-python3 setup.py install
+pip install acb-py
 python3 -m acb somefile.acb output
 # equivalent
 acbextract somefile.acb output
