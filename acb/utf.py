@@ -161,7 +161,18 @@ class R(object):
             break
         string = JOIN_BYTE_ARRAY(sr)
         self.f.seek(bk + len(string) + 1)
-        return string.decode("sjis")
+        return try_decode(string)
+
+
+def try_decode(text):
+    charsets = ['utf8', 'sjis']
+    for charset in charsets:
+        try:
+            return text.decode(charset)
+        except UnicodeDecodeError:
+            pass
+    raise UnicodeDecodeError("can't decode with any of %s: %r" % (''.join(charsets), text))
+
 
 class Struct(struct.Struct):
     """ struct with an output filter (usually a namedtuple) """
