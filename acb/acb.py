@@ -44,9 +44,8 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 import io
-import math
+import logging
 import struct
-import sys
 import itertools
 import os
 import re
@@ -55,6 +54,8 @@ from typing import Optional, Union, BinaryIO, Tuple, List, Callable
 
 from .utf import UTFTable, R
 from .disarm import DisarmContext
+
+logger = logging.getLogger(__name__)
 
 WAVEFORM_ENCODE_TYPE_ADX          = 0
 WAVEFORM_ENCODE_TYPE_HCA          = 2
@@ -95,8 +96,21 @@ class TrackList(object):
             if row["ReferenceType"] not in {3, 8}:
                 raise RuntimeError("ReferenceType {0} not implemented.".format(row["ReferenceType"]))
 
+            if ind in name_map:
+                cue_name = name_map[ind]
+            else:
+                cue_name = 'cue-%d-%d' % (ind, row['CueId'])
+            if row["ReferenceIndex"] >= len(syns.rows):
+                logger.warning(
+                    "ReferenceIndex out of range, Skip cue: cueId=%s, name=%s, ReferenceIndex=%s, len(syns.rows)=%s",
+                    row["CueId"],
+                    cue_name,
+                    row["ReferenceIndex"],
+                    len(syns.rows),
+                )
+                continue
             r_data = syns.rows[row["ReferenceIndex"]]["ReferenceItems"]
-            a, b = struct.unpack(">HH", r_data)
+            _, b = struct.unpack(">HH", r_data)
 
             wav_id = wavs.rows[b].get("Id")
             if wav_id is None:
@@ -105,7 +119,7 @@ class TrackList(object):
             enc = wavs.rows[b]["EncodeType"]
             is_stream = wavs.rows[b]["Streaming"]
 
-            self.tracks.append(track_t(row["CueId"], name_map.get(ind, "UNKNOWN"), wav_id,
+            self.tracks.append(track_t(row["CueId"], cue_name, wav_id,
                 extern_wav_id, enc, is_stream))
 
 def align(n):
