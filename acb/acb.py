@@ -45,6 +45,7 @@
 
 import io
 import logging
+import warnings
 import struct
 import itertools
 import os
@@ -74,6 +75,10 @@ wave_type_ftable = {
 
 track_t = T("track_t", ("cue_id", "name", "memory_wav_id", "external_wav_id", "enc_type", "is_stream"))
 
+class AcbFileWarning(UserWarning):
+    pass
+
+
 class TrackList(object):
     def __init__(self, utf):
         cue_handle = io.BytesIO(utf.rows[0]["CueTable"])
@@ -101,12 +106,15 @@ class TrackList(object):
             else:
                 cue_name = 'cue-%d-%d' % (ind, row['CueId'])
             if row["ReferenceIndex"] >= len(syns.rows):
-                logger.warning(
-                    "ReferenceIndex out of range, Skip cue: cueId=%s, name=%s, ReferenceIndex=%s, len(syns.rows)=%s",
-                    row["CueId"],
-                    cue_name,
-                    row["ReferenceIndex"],
-                    len(syns.rows),
+                warnings.warn(
+                    "ReferenceIndex out of range, Skip cue: cueId=%s, name=%s, ReferenceIndex=%s, len(syns.rows)=%s"
+                    % (
+                        row["CueId"],
+                        cue_name,
+                        row["ReferenceIndex"],
+                        len(syns.rows),
+                    ),
+                    AcbFileWarning,
                 )
                 continue
             r_data = syns.rows[row["ReferenceIndex"]]["ReferenceItems"]
