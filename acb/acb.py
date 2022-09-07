@@ -351,4 +351,4 @@ def extract_acb(
             name = name_gen(track)
 
             with open(os.path.join(target_dir, name), "wb") as out_file:
-                out_file.write(acb.get_track_data(track))
+                out_file.write(acb.get_track_data(track, unmask=not no_unmask))
