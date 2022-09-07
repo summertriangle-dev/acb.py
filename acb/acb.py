@@ -311,7 +311,10 @@ class ACBFile(object):
 
 
 def find_awb(path):
-    return re.sub(r"\.acb$", ".awb", path)
+    if re.search(r"\.acb$", path):
+        awb_path = re.sub(r"\.acb$", ".awb", path)
+        if os.path.exists(awb_path):
+            return awb_path
 
 def name_gen_default(track):
     return "{0}{1}".format(track.name, wave_type_ftable.get(track.enc_type, track.enc_type))
@@ -340,9 +343,7 @@ def extract_acb(
             i.e. True will result in unmasking being disabled.
     """
     if isinstance(acb_file, str) and extern_awb is None:
-        awb_name = find_awb(acb_file)
-        if os.path.exists(awb_name):
-            extern_awb = awb_name
+        extern_awb = find_awb(acb_file)
 
     with ACBFile(acb_file, extern_awb=extern_awb, hca_keys=hca_keys) as acb:
         for track in acb.track_list.tracks:
