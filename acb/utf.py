@@ -44,11 +44,9 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 import struct
-import io
 import functools
 import os
 from collections import namedtuple as T
-import sys
 
 BYTE_ZERO = 0
 def JOIN_BYTE_ARRAY(sr):

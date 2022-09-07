@@ -44,9 +44,7 @@
 # OTHER DEALINGS IN THE SOFTWARE.
 
 import io
-import math
 import struct
-import sys
 import itertools
 import os
 import re
@@ -216,7 +214,6 @@ class ACBFile(object):
             self.awb_handle, self.awb_handle_owned = _get_file_obj(extern_awb)
 
         self.encoding = encoding or "sjis"
-        print("User encoding:", encoding)
         try:
             utf = UTFTable(self.acb_handle, encoding=encoding or "sjis")
             self.track_list = TrackList(utf)
@@ -365,7 +362,6 @@ def extract_acb(
 
     with ACBFile(acb_file, extern_awb=extern_awb, hca_keys=hca_keys, encoding=encoding) as acb:
         for track in acb.track_list.tracks:
-            print(track)
             name = name_gen(track)
 
             with open(os.path.join(target_dir, name), "wb") as out_file:
