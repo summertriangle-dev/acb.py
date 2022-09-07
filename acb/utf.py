@@ -74,8 +74,9 @@ def latebinder(f):
 
 class R(object):
     """ file reader based on types """
-    def __init__(self, file):
+    def __init__(self, file, *, encoding="utf-8"):
         self.f = file
+        self.encoding = encoding
 
     int8_t    = latebinder(readfunc(">b"))
     uint8_t   = latebinder(readfunc(">B"))
@@ -161,7 +162,7 @@ class R(object):
             break
         string = JOIN_BYTE_ARRAY(sr)
         self.f.seek(bk + len(string) + 1)
-        return string.decode("sjis")
+        return string.decode(self.encoding)
 
 class Struct(struct.Struct):
     """ struct with an output filter (usually a namedtuple) """
@@ -229,14 +230,15 @@ utf_header_t = Struct(">IHHIIIHHI",
     "data_offset", "table_name_offset", "number_of_fields", "row_size", "number_of_rows")))
 
 class UTFTable(object):
-    def __init__(self, file):
-        buf = R(file)
+    def __init__(self, file, *, encoding="sjis"):
+        buf = R(file, encoding=encoding)
         magic = buf.uint32_t()
         if magic != 0x40555446:
             raise ValueError("bad magic")
 
         self.header = buf.struct(utf_header_t)
         self.name = buf.string0(at=self.header.string_table_offset + 8 + self.header.table_name_offset)
+        self.encoding = encoding
 
         buf.seek(0x20)
         self.read_schema(buf)
@@ -297,4 +299,4 @@ class UTFTable(object):
             yield ret
 
     def __repr__(self):
-        return "<UTFTable '{1}' with {0} rows>".format(len(self.rows), self.name)
+        return "<UTFTable '{1}' with {0} rows >".format(len(self.rows), self.name)

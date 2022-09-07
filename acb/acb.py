@@ -80,10 +80,10 @@ class TrackList(object):
         wav_handle = io.BytesIO(utf.rows[0]["WaveformTable"])
         syn_handle = io.BytesIO(utf.rows[0]["SynthTable"])
 
-        cues = UTFTable(cue_handle)
-        nams = UTFTable(nam_handle)
-        wavs = UTFTable(wav_handle)
-        syns = UTFTable(syn_handle)
+        cues = UTFTable(cue_handle, encoding=utf.encoding)
+        nams = UTFTable(nam_handle, encoding=utf.encoding)
+        wavs = UTFTable(wav_handle, encoding=utf.encoding)
+        syns = UTFTable(syn_handle, encoding=utf.encoding)
 
         self.tracks: List[track_t] = []
 
@@ -116,8 +116,8 @@ def align(n):
 afs2_file_ent_t = T("afs2_file_ent_t", ("cue_id", "offset", "size"))
 
 class AFSArchive(object):
-    def __init__(self, file):
-        buf = R(file)
+    def __init__(self, file, *, encoding=None):
+        buf = R(file, encoding=encoding)
 
         magic = buf.uint32_t()
         if magic != 0x41465332:
@@ -201,8 +201,12 @@ class ACBFile(object):
             "0xLOWBYTES,0xHIGHBYTES" is equivalent to invoking hca_decoder
             with arguments "-a LOWBYTES -b HIGHBYTES".
             If None, HCA files will not be decrypted.
+        - encoding: String encoding to use when reading the file. If this is
+            not passed, we'll try reading it as Shift-JIS first (for backwards
+            compatibility reasons), and then UTF-8, before giving up. If an 
+            encoding is explicitly passed, only that encoding will be used. 
     """
-    def __init__(self, acb_file: AnyFile, extern_awb: Optional[AnyFile] = None, hca_keys: Optional[str] = None):
+    def __init__(self, acb_file: AnyFile, extern_awb: Optional[AnyFile] = None, hca_keys: Optional[str] = None, encoding: str = None):
         self.acb_handle, self.acb_handle_owned = _get_file_obj(acb_file)
         
         if extern_awb is None:
@@ -210,23 +214,34 @@ class ACBFile(object):
             self.awb_handle_owned = False
         else:
             self.awb_handle, self.awb_handle_owned = _get_file_obj(extern_awb)
-                
-        utf = UTFTable(self.acb_handle)
+
+        self.encoding = encoding or "sjis"
+        print("User encoding:", encoding)
+        try:
+            utf = UTFTable(self.acb_handle, encoding=encoding or "sjis")
+            self.track_list = TrackList(utf)
+        except UnicodeDecodeError:
+            if encoding is None:
+                self.encoding = "utf-8"
+                utf = UTFTable(self.acb_handle, encoding="utf-8")
+                self.track_list = TrackList(utf)
+            else:
+                raise
+
         if len(utf.rows[0]["AwbFile"]) > 0:
-            self.embedded_awb = AFSArchive(io.BytesIO(utf.rows[0]["AwbFile"]))
+            self.embedded_awb = AFSArchive(io.BytesIO(utf.rows[0]["AwbFile"]), encoding=self.encoding)
         else:
             self.embedded_awb = None # type: ignore
 
         if self.awb_handle:
-            self.external_awb = AFSArchive(self.awb_handle)
+            self.external_awb = AFSArchive(self.awb_handle, encoding=self.encoding)
         else:
             self.external_awb = None # type: ignore
 
         self.hca_keys = hca_keys
         self.embedded_disarm: Optional[DisarmContext] = Uninitialized # type: ignore
         self.external_disarm: Optional[DisarmContext] = Uninitialized # type: ignore
-
-        self.track_list = TrackList(utf)
+        
         self.closed = False
     
     def get_embedded_disarm(self) -> Optional[DisarmContext]:
@@ -325,7 +340,8 @@ def extract_acb(
     extern_awb: Optional[AnyFile] = None,
     hca_keys: Optional[str] = None,
     name_gen: Callable[[track_t], str] = name_gen_default,
-    no_unmask: bool = False
+    no_unmask: bool = False,
+    encoding: Optional[str] = None
 ):
     """ Oneshot file extraction API. Dumps all tracks from a file into the
         named output directory.
@@ -341,11 +357,13 @@ def extract_acb(
         - no_unmask: See ACBFile.get_track_data's unmask argument. For 
             compatibility reasons, the meaning of this flag is reversed;
             i.e. True will result in unmasking being disabled.
+        - encoding: Encoding used for track names. See ACBFile's docstring
+            for behaviour when this argument is None/omitted. 
     """
     if isinstance(acb_file, str) and extern_awb is None:
         extern_awb = find_awb(acb_file)
 
-    with ACBFile(acb_file, extern_awb=extern_awb, hca_keys=hca_keys) as acb:
+    with ACBFile(acb_file, extern_awb=extern_awb, hca_keys=hca_keys, encoding=encoding) as acb:
         for track in acb.track_list.tracks:
             print(track)
             name = name_gen(track)
