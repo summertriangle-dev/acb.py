@@ -55,6 +55,12 @@ CHECKSUM_TABLE = (
 )
 
 def checksum(buf: bytes):
+    """
+    Calculate the checksum of a block.
+    """
+    if _acb_speedup:
+        return _acb_speedup.checksum_fast(buf)
+
     sum = 0
     for byte in buf:
         sum = ((sum << 8) ^ CHECKSUM_TABLE[(sum >> 8) ^ byte]) & 0xffff
@@ -178,6 +184,11 @@ class DisarmContext(object):
         return key_table_2
 
     def disarm(self, buf: bytearray, no_unmask: bool=False):
+        """
+        Remove encryption from a full HCA file in buf.
+        - no_unmask: If true, this will leave section names alone, which means
+          files will not be decodable by ffmpeg.
+        """
         magic = buf[:4]
         masked = True if magic[0] & 0x80 else False
         header_size = struct.unpack(">H", buf[6:8])[0]
@@ -216,11 +227,15 @@ class DisarmContext(object):
 
         end = header_size - 2
         if _acb_speedup:
-            _acb_speedup.checksum_block_fast(memoryview(buf)[:end])
+            _acb_speedup.checksum_block_fast(memoryview(buf)[:header_size])
         else:
             buf[end:end + 2] = checksum(memoryview(buf)[:end]).to_bytes(2, "big")
 
     def unmask_header(self, buf: bytearray, header_size: int):
+        """
+        Remove masking of section names from the HCA header.
+        This does not update the checksum or modify any section content.
+        """
         base = 0
         while base < header_size:
             tag = bytes(x & 0x7f for x in buf[base:base + 4])
@@ -234,6 +249,15 @@ class DisarmContext(object):
             base += SECTION_SIZES.get(tag, 4)
 
     def disarm_blocks(self, buf: bytearray, from_pos: int, block_count: int, block_size: int, ciph_type: int):
+        """
+        Remove encryption from one or more HCA blocks. buf should be at least 
+        from_pos + (block_size * block_count) bytes long.
+
+        - from_pos: Start of the first block as an offset into buf.
+        - block_count: Number of blocks to decrypt.
+        - block_size: Size of each block (get this from the HCA header)
+        - ciph_type: Cipher type (get this from the HCA header)
+        """
         if ciph_type == 0:
             return
         elif ciph_type == 1:
@@ -242,17 +266,24 @@ class DisarmContext(object):
             usetable = self.key_table_2
         else:
             raise ValueError("unknown cipher type")
+        
+        self.disarm_actual(buf, from_pos, block_count, block_size, usetable)
 
-        base = from_pos
-        stop = from_pos + (block_size * block_count)
+    def disarm_actual(self, buf: bytearray, frompos: int, blockcnt: int, blocksize: int, usetable: bytearray):
+        """
+        Do not call this method. If you were already using this, update your code to 
+        use disarm_blocks().
+        """
+        base = frompos
+        stop = frompos + (blocksize * blockcnt)
         while base < stop:
             if _acb_speedup:
-                _acb_speedup.disarm_block_fast(memoryview(buf)[base:base + block_size], usetable)
+                _acb_speedup.disarm_block_fast(memoryview(buf)[base:base + blocksize], usetable)
             else:
-                for i in range(base, base + block_size - 2):
+                for i in range(base, base + blocksize - 2):
                     buf[i] = usetable[buf[i]]
 
-                end = base + block_size - 2
+                end = base + blocksize - 2
                 buf[end:end + 2] = checksum(memoryview(buf)[base:end]).to_bytes(2, "big")
 
-            base += block_size
+            base += blocksize

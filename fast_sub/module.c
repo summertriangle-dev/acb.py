@@ -15,10 +15,12 @@
 
 static PyObject *disarm_block_fast(PyObject *self, PyObject *args);
 static PyObject *apply_checksum(PyObject *self, PyObject *args);
+static PyObject *checksum_ret(PyObject *self, PyObject *args);
 
 static PyMethodDef fd_top_level[] = {
     {"disarm_block_fast", disarm_block_fast, METH_VARARGS, "Decrypt the data within a buffer object."},
     {"checksum_block_fast", apply_checksum, METH_VARARGS, "Compute and append the checksum."},
+    {"checksum_fast", checksum_ret, METH_VARARGS, "Compute and return the checksum of a block."},
     {NULL, NULL, 0, NULL}
 };
 
@@ -67,14 +69,25 @@ static uint16_t CHECKSUM_TABLE[] = {
     0x8213, 0x0216, 0x021C, 0x8219, 0x0208, 0x820D, 0x8207, 0x0202
 };
 
-static void checksum(uint8_t *block, size_t len) {
+static uint16_t checksum(uint8_t *block, size_t len) {
     uint16_t sum = 0;
-    for (size_t i = len; i < len - 2; ++i) {
+    for (size_t i = 0; i < len; ++i) {
         sum = ((sum << 8) ^ CHECKSUM_TABLE[(sum >> 8) ^ block[i]]);
     }
 
-    uint16_t *target = (uint16_t *)(block + len - 2);
-    *target = htons(sum);
+    return sum;
+}
+
+static PyObject *checksum_ret(PyObject *self, PyObject *args) {
+    Py_buffer block;
+
+    if (!PyArg_ParseTuple(args, "y*", &block)) {
+        return NULL;
+    }
+
+    uint16_t sum = checksum(block.buf, block.len);
+    PyBuffer_Release(&block);
+    return PyLong_FromUnsignedLong(sum);
 }
 
 static PyObject *apply_checksum(PyObject *self, PyObject *args) {
@@ -90,7 +103,9 @@ static PyObject *apply_checksum(PyObject *self, PyObject *args) {
         return NULL;
     }
 
-    checksum(block.buf, block.len);
+    uint16_t sum = checksum(block.buf, block.len - 2);
+    uint16_t *target = (uint16_t *)(((uint8_t *)block.buf) + block.len - 2);
+    *target = htons(sum);
 
     PyBuffer_Release(&block);
     Py_RETURN_NONE;
