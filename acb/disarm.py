@@ -54,18 +54,18 @@ CHECKSUM_TABLE = (
     0x8213, 0x0216, 0x021C, 0x8219, 0x0208, 0x820D, 0x8207, 0x0202
 )
 
-def checksum(buf):
+def checksum(buf: bytes):
     sum = 0
     for byte in buf:
         sum = ((sum << 8) ^ CHECKSUM_TABLE[(sum >> 8) ^ byte]) & 0xffff
     return sum
 
-def sub1_rollover(i: int) -> int:
+def _sub1_rollover(i: int) -> int:
     if i == 0:
         return 0xffffffff
     return i - 1
 
-def small_rng(seed: int) -> bytearray:
+def _small_rng(seed: int) -> bytearray:
     a = ((seed & 1) << 3) | 0b0101
     c = (seed & 0xe) | 1
     seed >>= 4
@@ -76,15 +76,15 @@ def small_rng(seed: int) -> bytearray:
         table[i] = seed
     return table
 
-def mix_header_key(kl, hk):
+def _mix_header_key(kl, hk):
     k2p = (hk << 16) | (((hk ^ 0xffff) + 2) & 0xffff)
     return (kl * k2p) & 0xffffffffffffffff
 
 class DisarmContext(object):
-    KEY_TABLE_1 = None
+    KEY_TABLE_1: bytearray = None # type: ignore
 
     @classmethod
-    def init_table1(cls) -> bytearray:
+    def _init_table1(cls) -> bytearray:
         t = bytearray(256)
         t[0x00] = 0
         t[0xff] = 0xff
@@ -105,34 +105,34 @@ class DisarmContext(object):
             keyb = int(keyb_, 16)
 
             if header_key:
-                keylong = mix_header_key(keya | (keyb << 32), header_key)
+                keylong = _mix_header_key(keya | (keyb << 32), header_key)
                 keya = keylong & 0xffffffff
                 keyb = (keylong >> 32) & 0xffffffff
         else:
             keylong = int(keyspec, 16)
             if header_key:
-                keylong = mix_header_key(keylong, header_key)
+                keylong = _mix_header_key(keylong, header_key)
 
             keya = keylong & 0xffffffff
             keyb = (keylong >> 32) & 0xffffffff
 
         self.keya = keya
         self.keyb = keyb
-        self.tables()
+        self._init_tables()
 
-    def tables(self):
+    def _init_tables(self):
         if self.__class__.KEY_TABLE_1 is None:
-            self.__class__.KEY_TABLE_1 = self.init_table1()
+            self.__class__.KEY_TABLE_1 = self._init_table1()
 
-        self.key_table_2 = self.init_table2()
+        self.key_table_2 = self._init_table2()
 
-    def init_table2(self) -> bytearray:
+    def _init_table2(self) -> bytearray:
         keya = self.keya
         keyb = self.keyb
 
         if keya == 0:
-            keyb = sub1_rollover(keyb)
-        keya = sub1_rollover(keya)
+            keyb = _sub1_rollover(keyb)
+        keya = _sub1_rollover(keya)
 
         stage1 = bytearray(8)
         for i in range(7):
@@ -156,10 +156,10 @@ class DisarmContext(object):
             stage2[i] = stage1[j] ^ stage1[s2_ri[j]]
 
         stage3 = bytearray(256)
-        high = small_rng(stage1[0])
+        high = _small_rng(stage1[0])
         for i in range(16):
             base = 16 * i
-            low = small_rng(stage2[i])
+            low = _small_rng(stage2[i])
             hi = high[i] << 4
             for j in range(16):
                 stage3[base + j] = hi | low[j]
@@ -211,13 +211,7 @@ class DisarmContext(object):
         if ciph_type == 0:
             return
 
-        if ciph_type == 1:
-            self.disarm_actual(buf, header_size, block_cnt, block_size, self.KEY_TABLE_1)
-        elif ciph_type == 56:
-            self.disarm_actual(buf, header_size, block_cnt, block_size, self.key_table_2)
-        else:
-            raise ValueError("unknown cipher type")
-
+        self.disarm_blocks(buf, header_size, block_cnt, block_size, ciph_type)
         buf[ciph_seg + 4:ciph_seg + 6] = b"\x00\x00"
 
         end = header_size - 2
@@ -226,7 +220,7 @@ class DisarmContext(object):
         else:
             buf[end:end + 2] = checksum(memoryview(buf)[:end]).to_bytes(2, "big")
 
-    def unmask_header(self, buf, header_size):
+    def unmask_header(self, buf: bytearray, header_size: int):
         base = 0
         while base < header_size:
             tag = bytes(x & 0x7f for x in buf[base:base + 4])
@@ -239,17 +233,26 @@ class DisarmContext(object):
 
             base += SECTION_SIZES.get(tag, 4)
 
-    def disarm_actual(self, buf, frompos, blockcnt, blocksize, usetable):
-        base = frompos
-        stop = frompos + (blocksize * blockcnt)
+    def disarm_blocks(self, buf: bytearray, from_pos: int, block_count: int, block_size: int, ciph_type: int):
+        if ciph_type == 0:
+            return
+        elif ciph_type == 1:
+            usetable = self.KEY_TABLE_1
+        elif ciph_type == 56:
+            usetable = self.key_table_2
+        else:
+            raise ValueError("unknown cipher type")
+
+        base = from_pos
+        stop = from_pos + (block_size * block_count)
         while base < stop:
             if _acb_speedup:
-                _acb_speedup.disarm_block_fast(memoryview(buf)[base:base + blocksize], usetable)
+                _acb_speedup.disarm_block_fast(memoryview(buf)[base:base + block_size], usetable)
             else:
-                for i in range(base, base + blocksize - 2):
+                for i in range(base, base + block_size - 2):
                     buf[i] = usetable[buf[i]]
 
-                end = base + blocksize - 2
+                end = base + block_size - 2
                 buf[end:end + 2] = checksum(memoryview(buf)[base:end]).to_bytes(2, "big")
 
-            base += blocksize
+            base += block_size
