@@ -74,3 +74,43 @@ def test_unmask():
     hash = hashlib.sha256(vec3).hexdigest()
     print(binascii.hexlify(vec3))
     assert hash == "9d05c9475a6df68076d6e88bb94117f4cf405e5d01aeb32006a94cffa7168c67"
+
+TVEC4 = """
+C8C3C10002000060E6EDF4000100BB80
+00000001008001B5E3EFEDF000CC010F
+0101804D00070000E3E9F0E80038F0E1
+E4000000000000000000000000000000
+00000000000000000000000000000000
+0000000000000000000000000000A8CB
+FFFF346A5B597EDB1EE48806593CAB68
+6B7A8E1EBE668CFCE4FC0770E7F4A31E
+48236E86B2EEFB95B261582798A66A5C
+000000715C6C00000000000000000000
+80067F005028689CC200C200808880EF
+7160275D81E1BE94DD9D8F6C33880070
+1F7D7D571F28529A22525AF66E6CBEC2
+A559ED3BF35CF0E013E64234D7D1A2A5
+B5FBAC4390663B640CA681DE2D6AB3C2
+312194E30F50B25A6B356AC2BBBEC985
+EC927CEA45A1C918CD0BB19AE1223942
+77F876191AC8C6E3EE304A1ABF438F54
+FF2D141AFB28B1E73CC20000
+""".replace("\n", "").replace(" ", "")
+
+def test_full_disarm():
+    # The test vector and key we are using here are made up, but as long as the
+    # hashes were generated with a known-good version of the code, it's good enough.
+    vec4 = bytearray(binascii.unhexlify(TVEC4))
+    disarm._acb_speedup = _acb_speedup
+    context = disarm.DisarmContext("0x0")
+    context.disarm(vec4)
+    hash = hashlib.sha256(vec4).hexdigest()
+    assert hash == "ac080f61f6608d899c39ef09742cf7b5665ecb5ff616c2b421957bf1cd476869"
+
+    # Make sure both the pure Python and C versions produce the same result.
+    vec4 = bytearray(binascii.unhexlify(TVEC4))
+    disarm._acb_speedup = None
+    context = disarm.DisarmContext("0x0")
+    context.disarm(vec4)
+    hash = hashlib.sha256(vec4).hexdigest()
+    assert hash == "ac080f61f6608d899c39ef09742cf7b5665ecb5ff616c2b421957bf1cd476869"
