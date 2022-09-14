@@ -5,7 +5,7 @@ def main():
     args = dict(
         ext_modules=[
             Extension(
-                "_acb_speedup", sources=["fast_sub/module.c"], py_limited_api=True
+                "_acb_speedup", sources=["fast_sub/module.c"]
             )
         ],
     )
