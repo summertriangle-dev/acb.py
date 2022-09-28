@@ -114,8 +114,9 @@ def align(n):
 afs2_file_ent_t = T("afs2_file_ent_t", ("cue_id", "offset", "size"))
 
 class AFSArchive(object):
-    def __init__(self, file, *, encoding=None):
-        buf = R(file, encoding=encoding)
+    def __init__(self, file: BinaryIO, *, encoding: Optional[str] = None):
+        # Note: we don't do anything involving strings here so encoding is not actually required
+        buf = R(file, encoding=encoding or "utf-8")
 
         magic = buf.uint32_t()
         if magic != 0x41465332:
@@ -125,20 +126,20 @@ class AFSArchive(object):
         file_count = buf.le_uint32_t()
 
         if version[0] >= 0x02:
-            self.alignment = buf.le_uint16_t()
-            self.mix_key = buf.le_uint16_t()
+            self.alignment: int = buf.le_uint16_t()
+            self.mix_key: Optional[int] = buf.le_uint16_t()
         else:
-            self.alignment = buf.le_uint32_t()
-            self.mix_key = None
+            self.alignment: int = buf.le_uint32_t()
+            self.mix_key: Optional[int] = None
 
         #print("afs2:", file_count, "files in ar")
         #print("afs2: aligned to", self.alignment, "bytes")
 
-        self.offset_size = version[1]
-        self.offset_mask = int("FF" * self.offset_size, 16)
+        self.offset_size: int = version[1]
+        self.offset_mask: int = int("FF" * self.offset_size, 16)
         #print("afs2: a file offset is", self.offset_size, "bytes")
 
-        self.files = []
+        self.files: List[afs2_file_ent_t] = []
         self.create_file_entries(buf, file_count)
         self.src = buf
 
@@ -204,7 +205,7 @@ class ACBFile(object):
             compatibility reasons), and then UTF-8, before giving up. If an 
             encoding is explicitly passed, only that encoding will be used. 
     """
-    def __init__(self, acb_file: AnyFile, extern_awb: Optional[AnyFile] = None, hca_keys: Optional[str] = None, encoding: str = None):
+    def __init__(self, acb_file: AnyFile, extern_awb: Optional[AnyFile] = None, hca_keys: Optional[str] = None, encoding: Optional[str] = None):
         self.acb_handle, self.acb_handle_owned = _get_file_obj(acb_file)
         
         if extern_awb is None:
@@ -243,7 +244,7 @@ class ACBFile(object):
     
     def get_embedded_disarm(self) -> Optional[DisarmContext]:
         if self.embedded_disarm is Uninitialized:
-            if self.hca_keys:
+            if self.hca_keys and self.embedded_awb:
                 self.embedded_disarm = DisarmContext(self.hca_keys, self.embedded_awb.mix_key)
             else:
                 self.embedded_disarm = None
@@ -252,7 +253,7 @@ class ACBFile(object):
     
     def get_external_disarm(self) -> Optional[DisarmContext]:
         if self.external_disarm is Uninitialized:
-            if self.hca_keys:
+            if self.hca_keys and self.external_awb:
                 self.external_disarm = DisarmContext(self.hca_keys, self.external_awb.mix_key)
             else:
                 self.external_disarm = None
@@ -276,9 +277,15 @@ class ACBFile(object):
             raise ValueError("ACBFile is closed")
 
         if track.is_stream:
+            if not self.external_awb:
+                raise ValueError("Track {0} is streamed, but there's no external AWB attached.".format(track))
+
             buf = self.external_awb.file_data_for_cue_id(track.external_wav_id, rw=True)
             disarmer = self.get_external_disarm()
         else:
+            if not self.embedded_awb:
+                raise ValueError("Track {0} is internal, but this ACB file has no internal AWB.".format(track))
+
             buf = self.embedded_awb.file_data_for_cue_id(track.memory_wav_id, rw=True)
             disarmer = self.get_embedded_disarm()
 
@@ -313,7 +320,7 @@ class ACBFile(object):
         if self.acb_handle_owned:
             self.acb_handle.close()
             self.acb_handle_owned = False
-        if self.awb_handle_owned:
+        if self.awb_handle_owned and self.awb_handle:
             self.awb_handle.close()
             self.awb_handle_owned = False
         self.closed = True

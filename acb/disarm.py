@@ -1,4 +1,5 @@
 import struct
+from typing import Optional
 
 try:
     import _acb_speedup
@@ -104,7 +105,7 @@ class DisarmContext(object):
 
         return t
 
-    def __init__(self, keyspec: str, header_key: int = None):
+    def __init__(self, keyspec: str, header_key: Optional[int] = None):
         if "," in keyspec:
             keya_, keyb_ = keyspec.split(",")
             keya = int(keya_, 16)
