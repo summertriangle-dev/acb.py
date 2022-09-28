@@ -17,24 +17,30 @@ static PyObject *disarm_block_fast(PyObject *self, PyObject *args);
 static PyObject *apply_checksum(PyObject *self, PyObject *args);
 static PyObject *checksum_ret(PyObject *self, PyObject *args);
 
-static PyMethodDef fd_top_level[] = {
+static const PyMethodDef fd_top_level[] = {
     {"disarm_block_fast", disarm_block_fast, METH_VARARGS, "Decrypt the data within a buffer object."},
     {"checksum_block_fast", apply_checksum, METH_VARARGS, "Compute and append the checksum."},
     {"checksum_fast", checksum_ret, METH_VARARGS, "Compute and return the checksum of a block."},
     {NULL, NULL, 0, NULL}
 };
 
+static int exec_acb_speedup(PyObject *module);
+static const PyModuleDef_Slot modslots[] = {
+    {Py_mod_exec, exec_acb_speedup},
+    {0, NULL},
+};
 static PyModuleDef modinfo = {
     PyModuleDef_HEAD_INIT,
     .m_name = "_acb_speedup",
     .m_doc = "Speedups for disarm_actual",
-    .m_size = -1,
+    .m_size = 0,
     .m_methods = fd_top_level,
+    .m_slots = &modslots,
 };
 
 ////////////////////////////////////////////////////////
 
-static uint16_t CHECKSUM_TABLE[] = {
+static const uint16_t CHECKSUM_TABLE[] = {
     0x0000, 0x8005, 0x800F, 0x000A, 0x801B, 0x001E, 0x0014, 0x8011,
     0x8033, 0x0036, 0x003C, 0x8039, 0x0028, 0x802D, 0x8027, 0x0022,
     0x8063, 0x0066, 0x006C, 0x8069, 0x0078, 0x807D, 0x8077, 0x0072,
@@ -149,12 +155,10 @@ static PyObject *disarm_block_fast(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+static int exec_acb_speedup(PyObject *module) {
+    return 0;
+}
+
 PyMODINIT_FUNC PyInit__acb_speedup(void) {
-    PyObject *m;
-
-    m = PyModule_Create(&modinfo);
-    if (m == NULL)
-        return NULL;
-
-    return m;
+    return PyModuleDef_Init(&modinfo);
 }
