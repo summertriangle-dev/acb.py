@@ -137,25 +137,30 @@ class AFSArchive(object):
 
         self.offset_size: int = version[1]
         self.offset_mask: int = int("FF" * self.offset_size, 16)
+        cue_id_size = version[2]
         #print("afs2: a file offset is", self.offset_size, "bytes")
 
         self.files: List[afs2_file_ent_t] = []
-        self.create_file_entries(buf, file_count)
+        self.create_file_entries(buf, file_count, cue_id_size, self.offset_size, self.offset_mask)
         self.src = buf
 
-    def create_file_entries(self, buf, file_count):
-        buf.seek(0x10)
-        read_cue_ids = struct.Struct("<" + ("H" * file_count))
-        if self.offset_size == 2:
-            read_raw_offs = struct.Struct("<" + ("H" * (file_count + 1)))
+    def _struct_format(self, size):
+        if size == 2:
+            return "H"
+        elif size == 4:
+            return "I"
         else:
-            read_raw_offs = struct.Struct("<" + ("I" * (file_count + 1)))
+            raise ValueError("Cannot deal with size {0} at this time".format(size))
 
+    def create_file_entries(self, buf, file_count, cue_id_size, offset_size, offset_mask):
+        buf.seek(0x10)
+        read_cue_ids = struct.Struct("<" + (self._struct_format(cue_id_size) * file_count))
+        read_raw_offs = struct.Struct("<" + (self._struct_format(offset_size) * (file_count + 1)))
         # read all in one go
         cue_ids = buf.struct(read_cue_ids)
         raw_offs = buf.struct(read_raw_offs)
         # apply the mask
-        unaligned_offs = tuple(map(lambda x: x & self.offset_mask, raw_offs))
+        unaligned_offs = tuple(map(lambda x: x & offset_mask, raw_offs))
         aligned_offs = tuple(map(align(self.alignment), unaligned_offs))
         offsets_for_length_calculating = unaligned_offs[1:]
         lengths = itertools.starmap(
